@@ -41,7 +41,7 @@ async function loadEnv() {
 const API_URL = "https://image.novelai.net/ai/generate-image";
 const DIRECTOR_URL = "https://image.novelai.net/ai/augment-image";
 
-const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director"];
+const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director", "mask"];
 const DIRECTOR_TOOLS = ["bg-removal", "line-art", "sketch", "colorize", "emotion", "declutter"];
 const SAMPLERS = [
   "k_euler_ancestral", "k_euler", "k_dpmpp_2m",
@@ -105,6 +105,10 @@ function parseArgs() {
     // Inpaint
     inpaintStrength: 0.7,
 
+    // Mask creation
+    regions: [],        // array of "x,y,w,h" strings
+    invertMask: false,
+
     // Director: colorize
     defry: 0,
     // Director: emotion
@@ -161,6 +165,10 @@ function parseArgs() {
 
       // Inpaint
       case "--inpaint-strength": opts.inpaintStrength = +next(); break;
+
+      // Mask creation
+      case "--region": opts.regions.push(next()); break;
+      case "--invert-mask": opts.invertMask = true; break;
 
       // Director
       case "--defry": opts.defry = +next(); break;
@@ -242,6 +250,13 @@ ENHANCE:
 
 INPAINT:
   --inpaint-strength <0-1>  Inpainting strength (default: 0.7)
+
+MASK CREATION (mask mode):
+  --image, -i <path>        Source image (to read dimensions from)
+  --region <x,y,w,h>        Region to mask (repeatable, white=inpaint)
+  --invert-mask             Invert mask (black regions become white)
+  --width, -w <px>          Mask width (if no --image, default: 832)
+  --height, -h <px>         Mask height (if no --image, default: 1216)
 
 DIRECTOR:
   --defry <0-1>             Colorize: reduce noise/artifacts (default: 0)
@@ -437,6 +452,66 @@ function buildInpaintPayload(opts, imageBase64, maskBase64) {
   };
 }
 
+// ─── Mask creation ───────────────────────────────────────────────────────────
+
+async function createMask(opts) {
+  const sharp = (await import("sharp")).default;
+
+  // Determine dimensions from source image or CLI args
+  let w = opts.width;
+  let h = opts.height;
+  if (opts.image) {
+    const meta = await sharp(opts.image).metadata();
+    w = meta.width;
+    h = meta.height;
+    console.log(`  Source image: ${w}×${h}`);
+  }
+
+  // Start with black canvas (keep everything)
+  let mask = sharp({
+    create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
+  }).png();
+
+  // If regions specified, composite white rectangles (inpaint those areas)
+  if (opts.regions.length > 0) {
+    const overlays = [];
+    for (const regionStr of opts.regions) {
+      const [rx, ry, rw, rh] = regionStr.split(",").map(Number);
+      if ([rx, ry, rw, rh].some(isNaN)) {
+        throw new Error(`Invalid region: "${regionStr}" — expected x,y,w,h (e.g., 100,200,300,400)`);
+      }
+      // Create a white rectangle
+      const rect = await sharp({
+        create: { width: rw, height: rh, channels: 3, background: { r: 255, g: 255, b: 255 } },
+      }).png().toBuffer();
+      overlays.push({ input: rect, left: rx, top: ry });
+      console.log(`  Region: ${rx},${ry} ${rw}×${rh}`);
+    }
+    mask = sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    }).composite(overlays).png();
+  } else {
+    // No regions = full white mask (inpaint everything)
+    mask = sharp({
+      create: { width: w, height: h, channels: 3, background: { r: 255, g: 255, b: 255 } },
+    }).png();
+    console.log("  Full mask (no regions specified — everything will be inpainted)");
+  }
+
+  // Invert if requested
+  if (opts.invertMask) {
+    mask = sharp(await mask.toBuffer()).negate({ alpha: false }).png();
+    console.log("  Inverted mask");
+  }
+
+  // Save
+  await fs.mkdir(opts.out, { recursive: true });
+  const outPath = path.join(opts.out, `mask_${Date.now()}.png`);
+  await fs.writeFile(outPath, await mask.toBuffer());
+  console.log(`Saved: ${outPath} (${w}×${h})`);
+  return outPath;
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 async function callNovelAI(apiKey, payload) {
@@ -555,6 +630,13 @@ async function main() {
   if (opts.help) {
     printHelp();
     process.exit(0);
+  }
+
+  // ── Mask creation (no API key needed) ──
+  if (opts.action === "mask") {
+    console.log("\nAction: mask");
+    await createMask(opts);
+    return;
   }
 
   const apiKey = process.env.NOVELAI_API_KEY;

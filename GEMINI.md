@@ -131,7 +131,7 @@ best quality, absurdres, highres, incredibly absurdres, hyper detail
 
 ## Step 6 — Execute
 
-### Generate (Precise Reference)
+### 6A. Generate (Precise Reference)
 ```bash
 node generate.mjs --prompt "<prompt>" --negative "<negatives>" \
   --ref "refs/Etch-Style/<ref>.png" \
@@ -139,7 +139,9 @@ node generate.mjs --prompt "<prompt>" --negative "<negatives>" \
   --width 832 --height 1216 --scale 8 --steps 28 --cfg-rescale 0.4 --out output
 ```
 
-### Vibe Transfer
+### 6B. Vibe Transfer
+Use to generate with **loose style inspiration** from existing images. Unlike Precise Reference, Vibe Transfer doesn't reproduce exact style — it captures the "feel".
+
 ```bash
 node generate.mjs vibe --prompt "<prompt>" --negative "<negatives>" \
   --vibe "refs/style1.png" --vibe-strength 0.6 --vibe-info 1 \
@@ -147,35 +149,128 @@ node generate.mjs vibe --prompt "<prompt>" --negative "<negatives>" \
   --width 832 --height 1216 --scale 8 --steps 28 --out output
 ```
 
-### Enhance (upscale/refine)
+**Vibe parameter guidance:**
+- `--vibe-strength`: 0.3–0.4 = subtle influence, 0.6–0.8 = strong influence
+- `--vibe-info`: 1.0 = full detail extraction, 0.5 = loose mood/color only
+- Multiple vibes: strengths should sum ≤ 1.0
+- Up to 16 vibes allowed
+
+### 6C. Enhance (Upscale/Refine)
+Use **after generating** to improve quality or upscale. **Always reuse the same prompt** from the original generation.
+
 ```bash
-node generate.mjs enhance --image "output/gen_123.png" --prompt "<prompt>" \
+node generate.mjs enhance --image "output/gen_<seed>.png" --prompt "<SAME prompt as generation>" \
   --magnitude 0.5 --upscale 2 --out output
 ```
 
-### Inpaint (region editing)
+**When to enhance:**
+- User explicitly asks for higher quality or upscale
+- Generated image looks good compositionally but lacks detail
+- Never enhance an already-enhanced image (quality degrades)
+
+**Magnitude rules:**
+- `0.2–0.4` = subtle refinement (preserves original closely)
+- `0.5–0.6` = moderate (recommended default)
+- `0.7+` = heavy rework (may change composition)
+
+### 6D. Inpaint (Region Editing)
+
+Inpainting requires a **mask image** (white = areas to regenerate, black = keep). Use the built-in `mask` action to create masks.
+
+**Full inpaint workflow:**
+
 ```bash
-node generate.mjs inpaint --image "output/gen_123.png" --mask "mask.png" \
-  --prompt "<what to put in the masked area>" --inpaint-strength 0.7 --out output
+# Step 1: Create mask targeting the region to fix
+#   Specify regions as x,y,width,height coordinates
+node generate.mjs mask --image "output/gen_<seed>.png" \
+  --region "x,y,w,h" --out output
+
+# Step 2: Run inpaint with the mask
+node generate.mjs inpaint --image "output/gen_<seed>.png" \
+  --mask "output/mask_<timestamp>.png" \
+  --prompt "<describe what should appear in the masked region>" \
+  --inpaint-strength 0.7 --out output
 ```
 
-### Director Tools
+**How to determine mask regions:**
+1. View the generated image to identify the problem area
+2. Estimate the pixel coordinates (x, y) and dimensions (w, h) of the region
+3. For a 832×1216 image, approximate regions:
+   - **Face/head**: `--region "280,50,280,300"`
+   - **Left hand**: `--region "50,400,250,300"`
+   - **Right hand**: `--region "530,400,250,300"`
+   - **Full torso**: `--region "200,200,430,500"`
+   - **Lower body**: `--region "150,700,530,500"`
+4. Multiple `--region` flags create multiple white areas
+
+**Mask examples:**
+```bash
+# Fix a bad hand (right side of image)
+node generate.mjs mask --image "output/gen_123.png" --region "530,400,250,300" --out output
+
+# Fix face only
+node generate.mjs mask --image "output/gen_123.png" --region "280,50,280,300" --out output
+
+# Full-image mask (regenerate everything with img2img guidance)
+node generate.mjs mask --image "output/gen_123.png" --out output
+
+# Invert: keep ONLY a specific region, regenerate everything else
+node generate.mjs mask --image "output/gen_123.png" --region "200,100,430,500" --invert-mask --out output
+```
+
+**Inpaint strength guidance:**
+- `0.5` = minor corrections (fix small artifacts, keep structure)
+- `0.7` = moderate (recommended default, regenerates with some original guidance)
+- `0.9–1.0` = full regeneration of masked area (ignores original)
+
+**Inpaint prompt:** Describe what should appear IN the masked region, not the whole image. Example: if fixing a hand, prompt should focus on hand details (`detailed fingers, relaxed hand, natural pose`).
+
+### 6E. Director Tools (Post-Processing)
 ```bash
 node generate.mjs director bg-removal --image "output/gen_123.png" --out output
 node generate.mjs director line-art --image "output/gen_123.png" --out output
+node generate.mjs director sketch --image "output/gen_123.png" --out output
 node generate.mjs director colorize --image "lineart.png" --prompt "red hair, blue eyes" --out output
 node generate.mjs director emotion --image "output/gen_123.png" --prompt "smile, happy" --emotion-level 0.7 --out output
 node generate.mjs director declutter --image "output/gen_123.png" --out output
 ```
 
-### Multi-Step Pipeline Example
+### 6F. Multi-Step Pipeline Chains
+
+Chain actions sequentially. Each step's output becomes the next step's input.
+
+**Common pipelines:**
+
+| Pipeline | Steps |
+|:---|:---|
+| High-quality generation | generate → enhance (magnitude 0.4, upscale 2) |
+| Fix bad hands | generate → mask (hand region) → inpaint (hand prompt) |
+| Transparent background | generate → director bg-removal |
+| Line art extraction | generate → director line-art |
+| Expression change | generate → director emotion |
+| Full polish | generate → mask+inpaint (fix issues) → enhance → director bg-removal |
+
+**Pipeline example (generate → fix hands → enhance):**
 ```bash
-# 1. Generate base image
-node generate.mjs --prompt "<tags>" --ref "refs/Etch-Style/etching_blindfold_sensory_01.png" ...
-# 2. Enhance/upscale
-node generate.mjs enhance --image "output/gen_123.png" --prompt "<tags>" --upscale 2
-# 3. Remove background
-node generate.mjs director bg-removal --image "output/enhanced_456.png"
+# 1. Generate
+node generate.mjs --prompt "<tags>" --ref "refs/Etch-Style/etching_blindfold_sensory_01.png" \
+  --strength 0.85 --width 832 --height 1216 --scale 8 --out output
+# Output: output/gen_1234.png
+
+# 2. Inspect output, identify bad right hand at ~530,400
+# 3. Create mask
+node generate.mjs mask --image "output/gen_1234.png" --region "530,400,250,300" --out output
+# Output: output/mask_5678.png
+
+# 4. Inpaint hand
+node generate.mjs inpaint --image "output/gen_1234.png" --mask "output/mask_5678.png" \
+  --prompt "detailed hand, relaxed fingers, natural pose, anatomically correct" \
+  --inpaint-strength 0.7 --out output
+# Output: output/inpaint_9012.png
+
+# 5. Enhance/upscale final result
+node generate.mjs enhance --image "output/inpaint_9012.png" \
+  --prompt "<original full prompt>" --magnitude 0.4 --upscale 2 --out output
 ```
 
 ---
