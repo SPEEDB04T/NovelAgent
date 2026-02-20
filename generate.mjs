@@ -473,7 +473,7 @@ function buildInpaintPayload(opts, imageBase64, maskBase64) {
   return {
     input: opts.prompt,
     model: "nai-diffusion-4-5-full",
-    action: "infill",
+    action: "img2img",
     parameters: params,
   };
 }
