@@ -1,0 +1,14 @@
+{
+  "name": "novelagent",
+  "version": "2.0.0",
+  "description": "NovelAI V4.5 image generator with Precise Reference style transfer",
+  "type": "module",
+  "scripts": {
+    "generate": "node generate.mjs",
+    "help": "node generate.mjs --help"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "sharp": "^0.34.5"
+  }
+}
