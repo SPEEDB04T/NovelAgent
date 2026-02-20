@@ -180,13 +180,18 @@ Inpainting requires a **mask image** (white = areas to regenerate, black = keep)
 **Recommended workflow — view the image yourself:**
 
 1. **View the generated image** — you are multimodal and can read local image files
-2. **Identify the problem** — bad hand, extra fingers, deformed face, artifacts
-3. **Estimate the region** as `x,y,width,height` in pixels (the image is typically 832×1216)
-4. **Add ~20% padding** to your estimate for safety
+2. **Perform structured spatial analysis** — for each visible body part or defect, mentally identify:
+   - What it is (face, right_hand, left_arm, etc.)
+   - Its bounding box as approximate percentage of image dimensions
+   - Whether it has any anatomical issues (extra fingers, deformation, artifacts)
+3. **Convert to pixel coordinates** — multiply percentages by image dimensions (typically 832×1216):
+   - `x = x_percent × 832`, `y = y_percent × 1216`
+   - `w = width_percent × 832`, `h = height_percent × 1216`
+4. **Add ~20% padding** to each dimension for safety
 5. **Create the mask and inpaint:**
 
 ```bash
-# Create mask from your estimated region
+# Create mask from your detected region
 node generate.mjs mask --image "output/gen_<seed>.png" --region "<x>,<y>,<w>,<h>" --out output
 
 # Inpaint the masked region
