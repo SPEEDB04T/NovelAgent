@@ -40,8 +40,9 @@ async function loadEnv() {
 
 const API_URL = "https://image.novelai.net/ai/generate-image";
 const DIRECTOR_URL = "https://image.novelai.net/ai/augment-image";
+const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
-const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director", "mask"];
+const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director", "mask", "analyze"];
 const DIRECTOR_TOOLS = ["bg-removal", "line-art", "sketch", "colorize", "emotion", "declutter"];
 const SAMPLERS = [
   "k_euler_ancestral", "k_euler", "k_dpmpp_2m",
@@ -109,6 +110,9 @@ function parseArgs() {
     regions: [],        // array of "x,y,w,h" strings
     invertMask: false,
 
+    // Analyze
+    detect: null,       // natural language detection target
+
     // Director: colorize
     defry: 0,
     // Director: emotion
@@ -169,6 +173,9 @@ function parseArgs() {
       // Mask creation
       case "--region": opts.regions.push(next()); break;
       case "--invert-mask": opts.invertMask = true; break;
+
+      // Analyze
+      case "--detect": opts.detect = next(); break;
 
       // Director
       case "--defry": opts.defry = +next(); break;
@@ -257,6 +264,11 @@ MASK CREATION (mask mode):
   --invert-mask             Invert mask (black regions become white)
   --width, -w <px>          Mask width (if no --image, default: 832)
   --height, -h <px>         Mask height (if no --image, default: 1216)
+
+ANALYZE (analyze mode — requires GEMINI_API_KEY in .env):
+  --image, -i <path>        Image to analyze
+  --detect <text>            What to detect (e.g. "hands, face", "anatomical issues")
+                            Outputs --region flags ready for mask creation
 
 DIRECTOR:
   --defry <0-1>             Colorize: reduce noise/artifacts (default: 0)
@@ -512,6 +524,117 @@ async function createMask(opts) {
   return outPath;
 }
 
+// ─── Image analysis (Gemini Vision) ──────────────────────────────────────────
+
+async function analyzeImage(geminiKey, opts) {
+  const sharp = (await import("sharp")).default;
+
+  // Read image and get dimensions
+  const imgBuf = await fs.readFile(opts.image);
+  const meta = await sharp(imgBuf).metadata();
+  const w = meta.width;
+  const h = meta.height;
+  const base64 = imgBuf.toString("base64");
+  const mimeType = opts.image.endsWith(".png") ? "image/png" : "image/jpeg";
+
+  console.log(`  Image: ${opts.image} (${w}×${h})`);
+
+  // Build detection prompt
+  const detectTarget = opts.detect || "all body parts (face, hands, torso, legs)";
+  const prompt = `Detect ${detectTarget} in this anime image. Return ONLY a JSON array of objects, each with:
+- "label": descriptive name (e.g. "right_hand", "face", "left_arm")
+- "box_2d": [y_min, x_min, y_max, x_max] normalized to 0-1000
+- "issue": optional string describing any anatomical issue (e.g. "extra fingers", "deformed")
+
+Only include items you can actually see. Return valid JSON array, nothing else.`;
+
+  console.log(`  Detecting: ${detectTarget}`);
+
+  // Call Gemini API
+  const model = "gemini-2.5-flash";
+  const url = `${GEMINI_URL}/${model}:generateContent?key=${geminiKey}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: mimeType, data: base64 } },
+          { text: prompt },
+        ],
+      }],
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Gemini API ${res.status}: ${text.slice(0, 500)}`);
+  }
+
+  const data = await res.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!text) {
+    console.error("No response from Gemini Vision API.");
+    return;
+  }
+
+  // Parse JSON response
+  let detections;
+  try {
+    // Strip markdown fencing if present
+    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+    detections = JSON.parse(cleaned);
+  } catch (e) {
+    console.error("Failed to parse Gemini response as JSON:");
+    console.error(text);
+    return;
+  }
+
+  if (!Array.isArray(detections) || detections.length === 0) {
+    console.log("  No detections found.");
+    return;
+  }
+
+  // Convert normalized coords to pixel regions
+  console.log(`\n  Found ${detections.length} region(s):\n`);
+  const regionFlags = [];
+
+  for (const det of detections) {
+    const [yMin, xMin, yMax, xMax] = det.box_2d;
+    // Convert from 0-1000 normalized to pixel coordinates
+    const px = Math.round(xMin / 1000 * w);
+    const py = Math.round(yMin / 1000 * h);
+    const pw = Math.round((xMax - xMin) / 1000 * w);
+    const ph = Math.round((yMax - yMin) / 1000 * h);
+
+    const region = `${px},${py},${pw},${ph}`;
+    regionFlags.push(region);
+
+    const issue = det.issue ? ` ⚠️  ${det.issue}` : "";
+    console.log(`  ${det.label.padEnd(20)} --region "${region}"  (${pw}×${ph} px)${issue}`);
+  }
+
+  // Output ready-to-use commands
+  console.log(`\n  Ready-to-use commands:\n`);
+
+  // Single-region mask commands
+  for (let i = 0; i < detections.length; i++) {
+    console.log(`  # Fix ${detections[i].label}:`);
+    console.log(`  node generate.mjs mask --image "${opts.image}" --region "${regionFlags[i]}" --out output`);
+  }
+
+  // Combined mask command
+  if (regionFlags.length > 1) {
+    const allRegions = regionFlags.map(r => `--region "${r}"`).join(" ");
+    console.log(`\n  # Fix all detected regions:`);
+    console.log(`  node generate.mjs mask --image "${opts.image}" ${allRegions} --out output`);
+  }
+}
+
 // ─── API calls ───────────────────────────────────────────────────────────────
 
 async function callNovelAI(apiKey, payload) {
@@ -636,6 +759,22 @@ async function main() {
   if (opts.action === "mask") {
     console.log("\nAction: mask");
     await createMask(opts);
+    return;
+  }
+
+  // ── Analyze (uses Gemini API, not NovelAI) ──
+  if (opts.action === "analyze") {
+    console.log("\nAction: analyze");
+    if (!opts.image) {
+      console.error("Error: --image is required for analyze.");
+      process.exit(1);
+    }
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      console.error("Error: GEMINI_API_KEY not set. Add to .env for image analysis.");
+      process.exit(1);
+    }
+    await analyzeImage(geminiKey, opts);
     return;
   }
 

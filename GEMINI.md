@@ -175,7 +175,30 @@ node generate.mjs enhance --image "output/gen_<seed>.png" --prompt "<SAME prompt
 
 ### 6D. Inpaint (Region Editing)
 
-Inpainting requires a **mask image** (white = areas to regenerate, black = keep). Use the built-in `mask` action to create masks.
+Inpainting requires a **mask image** (white = areas to regenerate, black = keep).
+
+**Recommended workflow — use `analyze` to detect regions automatically:**
+
+```bash
+# Step 1: Analyze image to detect body parts and issues (requires GEMINI_API_KEY)
+node generate.mjs analyze --image "output/gen_<seed>.png" --detect "hands, face"
+# Output example:
+#   face                 --region "233,51,233,314"  (233×314 px)
+#   right_hand           --region "441,486,208,304"  (208×304 px) ⚠️  extra fingers
+
+# Step 2: Create mask from detected region
+node generate.mjs mask --image "output/gen_<seed>.png" --region "441,486,208,304" --out output
+
+# Step 3: Inpaint the masked region
+node generate.mjs inpaint --image "output/gen_<seed>.png" \
+  --mask "output/mask_<timestamp>.png" \
+  --prompt "detailed hand, relaxed fingers, natural pose, anatomically correct" \
+  --inpaint-strength 0.7 --out output
+```
+
+**Fallback: manual region estimation** (if no GEMINI_API_KEY available)
+
+Use the built-in `mask` action with approximate coordinates:
 
 **Full inpaint workflow:**
 
