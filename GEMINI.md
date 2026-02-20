@@ -197,15 +197,19 @@ Inpainting requires a **mask image** (white = areas to regenerate, black = keep)
 node generate.mjs mask --image "output/gen_<seed>.png" \
   --region "320,530,104,101" --region "424,530,104,101" --out output
 
-# Inpaint the masked region
+# Inpaint the masked region (MUST include --ref to preserve style)
 node generate.mjs inpaint --image "output/gen_<seed>.png" \
   --mask "output/mask_<timestamp>.png" \
+  --ref "refs/Etch-Style/<same_ref_used_for_generation>.png" \
   --prompt "detailed hand, relaxed fingers, natural pose, anatomically correct" \
-  --inpaint-strength 0.7 --out output
+  --strength 0.85 --inpaint-strength 0.7 --scale 8 --out output
 ```
 
 *Need more precision? Increase density: `node generate.mjs grid --image ... --grid-cols 16 --grid-rows 24`*
 *If an issue occupies only a corner of a cell, you can manually trim the printed coordinates (e.g., reduce the width/height values).*
+
+> [!IMPORTANT]
+> **Always pass `--ref` when inpainting** with the same reference image used for the original generation. Without it, the inpainted region will lose the style (e.g., etch/engraving texture disappears).
 
 **Optional: use `analyze` for precise detection** (requires GEMINI_API_KEY in .env):
 
