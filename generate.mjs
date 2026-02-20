@@ -114,8 +114,8 @@ function parseArgs() {
     detect: null,       // natural language detection target
 
     // Grid overlay
-    gridCols: 4,
-    gridRows: 6,
+    gridCols: null,
+    gridRows: null,
 
     // Director: colorize
     defry: 0,
@@ -280,8 +280,8 @@ ANALYZE (analyze mode — requires GEMINI_API_KEY in .env):
 
 GRID OVERLAY (grid mode — for visual inspection):
   --image, -i <path>        Image to overlay grid on
-  --grid-cols <n>            Grid columns (default: 4, labels A-D)
-  --grid-rows <n>            Grid rows (default: 6, labels 1-6)
+  --grid-cols <n>            Grid columns (default: auto based on aspect ratio)
+  --grid-rows <n>            Grid rows (default: auto based on aspect ratio)
                             Agent views gridded image, references cells by label (e.g. C3)
 
 DIRECTOR:
@@ -551,15 +551,34 @@ async function createGrid(opts) {
   const meta = await sharp(imgBuf).metadata();
   const w = meta.width;
   const h = meta.height;
-  const cols = opts.gridCols;
-  const rows = opts.gridRows;
+
+  // Auto-calculate grid to maintain ~96 roughly square cells across any aspect ratio
+  let cols = opts.gridCols;
+  let rows = opts.gridRows;
+
+  if (!cols || !rows) {
+    const targetCells = 96;
+    const aspectRatio = w / h;
+    cols = cols || Math.round(Math.sqrt(targetCells * aspectRatio));
+    rows = rows || Math.round(Math.sqrt(targetCells / aspectRatio));
+  }
+
   const cellW = Math.floor(w / cols);
   const cellH = Math.floor(h / rows);
 
   console.log(`  Image: ${w}×${h}, grid: ${cols}×${rows} (cells: ${cellW}×${cellH} px)`);
 
+  // Helper for Excel-style column labels (A, B... Z, AA...)
+  const getColLabel = (i) => {
+    let label = "";
+    while (i >= 0) {
+      label = String.fromCharCode((i % 26) + 65) + label;
+      i = Math.floor(i / 26) - 1;
+    }
+    return label;
+  };
+
   // Build SVG overlay with grid lines and cell labels
-  const colLabels = "ABCDEFGHIJKLMNOP".slice(0, cols).split("");
   let svgLines = "";
   let svgLabels = "";
 
@@ -578,12 +597,12 @@ async function createGrid(opts) {
   }
 
   // Cell labels (e.g., A1, B2, C3)
-  const fontSize = Math.max(14, Math.min(cellW, cellH) / 5);
+  const fontSize = Math.max(12, Math.min(cellW, cellH) / 4);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const label = `${colLabels[c]}${r + 1}`;
+      const label = `${getColLabel(c)}${r + 1}`;
       const cx = c * cellW + cellW / 2;
-      const cy = r * cellH + fontSize + 4;
+      const cy = r * cellH + fontSize / 1.5 + cellH / 2 - fontSize / 2;
       // Dark outline for readability
       svgLabels += `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="monospace" font-size="${fontSize}" font-weight="bold" stroke="rgba(0,0,0,0.8)" stroke-width="3" fill="none">${label}</text>`;
       // White fill
@@ -608,10 +627,10 @@ async function createGrid(opts) {
   console.log(`\n  Cell mapping (for --region flag):\n`);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const label = `${colLabels[c]}${r + 1}`;
+      const label = `${getColLabel(c)}${r + 1}`;
       const x = c * cellW;
       const y = r * cellH;
-      process.stdout.write(`  ${label}=${x},${y},${cellW},${cellH}  `);
+      process.stdout.write(`  ${label.padEnd(4)}=${x},${y},${cellW},${cellH}  `);
     }
     process.stdout.write("\n");
   }

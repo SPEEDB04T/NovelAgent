@@ -183,16 +183,19 @@ Inpainting requires a **mask image** (white = areas to regenerate, black = keep)
    ```bash
    node generate.mjs grid --image "output/gen_<seed>.png" --out output
    ```
-   *This outputs a fresh image (`output/grid_XXX.png`) with a labeled A1-D6 grid, and prints the exact `--region` coordinates for every cell to the terminal.*
+   *This outputs an image (`output/grid_XXX.png`) with an auto-scaled grid (e.g., 8×12 or 10×10) tailored exactly to the image's aspect ratio.*
+   *The grid defaults to ~96 strictly square cells, ensuring consistent precision (cells are ~100×100 px) regardless of the image's resolution.*
+   *The exact `--region` coordinates for every cell are printed to the terminal.*
 
 2. **View the gridded image** — you are multimodal and can read local image files.
-3. **Identify the problem cells** — note which cells contain the bad hand, extra fingers, or artifacts (e.g., "The deformed hand is in cell C3").
+3. **Identify the problem cells** — note which cells contain the defect (e.g., "The bad hand spans cells E6 and F6").
 4. **Copy the coordinates** for those cells from the terminal output of step 1.
 5. **Create the mask and inpaint:**
 
 ```bash
-# Create mask using the exact coordinates for the problem cells (e.g., C3's coordinates)
-node generate.mjs mask --image "output/gen_<seed>.png" --region "320,212,160,106" --out output
+# Combine multiple cells using multiple --region flags
+node generate.mjs mask --image "output/gen_<seed>.png" \
+  --region "320,530,104,101" --region "424,530,104,101" --out output
 
 # Inpaint the masked region
 node generate.mjs inpaint --image "output/gen_<seed>.png" \
@@ -200,6 +203,9 @@ node generate.mjs inpaint --image "output/gen_<seed>.png" \
   --prompt "detailed hand, relaxed fingers, natural pose, anatomically correct" \
   --inpaint-strength 0.7 --out output
 ```
+
+*Need more precision? Increase density: `node generate.mjs grid --image ... --grid-cols 16 --grid-rows 24`*
+*If an issue occupies only a corner of a cell, you can manually trim the printed coordinates (e.g., reduce the width/height values).*
 
 **Optional: use `analyze` for precise detection** (requires GEMINI_API_KEY in .env):
 
