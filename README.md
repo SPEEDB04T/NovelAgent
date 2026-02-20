@@ -8,6 +8,8 @@ NovelAI V4.5 image generator with **Precise Reference** style transfer. Generate
 npm install
 ```
 
+> **Note:** `.gitignore` is pre-configured to exclude `.env`, `.env.local`, `*.log`, and `output/`. Your API key is protected from accidental commits.
+
 Create `.env`:
 ```
 NOVELAI_API_KEY=your_key_here

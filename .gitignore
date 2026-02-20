@@ -1,4 +1,6 @@
 node_modules/
 output/
 .env
+.env.local
+*.log
 _run.mjs
