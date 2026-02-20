@@ -42,7 +42,7 @@ const API_URL = "https://image.novelai.net/ai/generate-image";
 const DIRECTOR_URL = "https://image.novelai.net/ai/augment-image";
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
-const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director", "mask", "analyze"];
+const ACTIONS = ["generate", "vibe", "enhance", "inpaint", "director", "mask", "analyze", "grid"];
 const DIRECTOR_TOOLS = ["bg-removal", "line-art", "sketch", "colorize", "emotion", "declutter"];
 const SAMPLERS = [
   "k_euler_ancestral", "k_euler", "k_dpmpp_2m",
@@ -113,6 +113,10 @@ function parseArgs() {
     // Analyze
     detect: null,       // natural language detection target
 
+    // Grid overlay
+    gridCols: 4,
+    gridRows: 6,
+
     // Director: colorize
     defry: 0,
     // Director: emotion
@@ -176,6 +180,10 @@ function parseArgs() {
 
       // Analyze
       case "--detect": opts.detect = next(); break;
+
+      // Grid
+      case "--grid-cols": opts.gridCols = +next(); break;
+      case "--grid-rows": opts.gridRows = +next(); break;
 
       // Director
       case "--defry": opts.defry = +next(); break;
@@ -269,6 +277,12 @@ ANALYZE (analyze mode — requires GEMINI_API_KEY in .env):
   --image, -i <path>        Image to analyze
   --detect <text>            What to detect (e.g. "hands, face", "anatomical issues")
                             Outputs --region flags ready for mask creation
+
+GRID OVERLAY (grid mode — for visual inspection):
+  --image, -i <path>        Image to overlay grid on
+  --grid-cols <n>            Grid columns (default: 4, labels A-D)
+  --grid-rows <n>            Grid rows (default: 6, labels 1-6)
+                            Agent views gridded image, references cells by label (e.g. C3)
 
 DIRECTOR:
   --defry <0-1>             Colorize: reduce noise/artifacts (default: 0)
@@ -524,6 +538,87 @@ async function createMask(opts) {
   return outPath;
 }
 
+// ─── Grid overlay ────────────────────────────────────────────────────────────
+
+async function createGrid(opts) {
+  const sharp = (await import("sharp")).default;
+
+  if (!opts.image) {
+    throw new Error("--image is required for grid mode.");
+  }
+
+  const imgBuf = await fs.readFile(opts.image);
+  const meta = await sharp(imgBuf).metadata();
+  const w = meta.width;
+  const h = meta.height;
+  const cols = opts.gridCols;
+  const rows = opts.gridRows;
+  const cellW = Math.floor(w / cols);
+  const cellH = Math.floor(h / rows);
+
+  console.log(`  Image: ${w}×${h}, grid: ${cols}×${rows} (cells: ${cellW}×${cellH} px)`);
+
+  // Build SVG overlay with grid lines and cell labels
+  const colLabels = "ABCDEFGHIJKLMNOP".slice(0, cols).split("");
+  let svgLines = "";
+  let svgLabels = "";
+
+  // Vertical lines
+  for (let c = 1; c < cols; c++) {
+    const x = c * cellW;
+    svgLines += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>`;
+    svgLines += `<line x1="${x}" y1="0" x2="${x}" y2="${h}" stroke="rgba(0,0,0,0.3)" stroke-width="1"/>`;
+  }
+
+  // Horizontal lines
+  for (let r = 1; r < rows; r++) {
+    const y = r * cellH;
+    svgLines += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>`;
+    svgLines += `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="rgba(0,0,0,0.3)" stroke-width="1"/>`;
+  }
+
+  // Cell labels (e.g., A1, B2, C3)
+  const fontSize = Math.max(14, Math.min(cellW, cellH) / 5);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const label = `${colLabels[c]}${r + 1}`;
+      const cx = c * cellW + cellW / 2;
+      const cy = r * cellH + fontSize + 4;
+      // Dark outline for readability
+      svgLabels += `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="monospace" font-size="${fontSize}" font-weight="bold" stroke="rgba(0,0,0,0.8)" stroke-width="3" fill="none">${label}</text>`;
+      // White fill
+      svgLabels += `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="monospace" font-size="${fontSize}" font-weight="bold" fill="rgba(255,255,255,0.9)">${label}</text>`;
+    }
+  }
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">${svgLines}${svgLabels}</svg>`;
+
+  // Composite grid overlay onto image
+  const gridded = await sharp(imgBuf)
+    .composite([{ input: Buffer.from(svg), blend: "over" }])
+    .png()
+    .toBuffer();
+
+  await fs.mkdir(opts.out, { recursive: true });
+  const outPath = path.join(opts.out, `grid_${Date.now()}.png`);
+  await fs.writeFile(outPath, gridded);
+  console.log(`Saved: ${outPath}`);
+
+  // Print cell-to-region mapping
+  console.log(`\n  Cell mapping (for --region flag):\n`);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const label = `${colLabels[c]}${r + 1}`;
+      const x = c * cellW;
+      const y = r * cellH;
+      process.stdout.write(`  ${label}=${x},${y},${cellW},${cellH}  `);
+    }
+    process.stdout.write("\n");
+  }
+
+  return outPath;
+}
+
 // ─── Image analysis (Gemini Vision) ──────────────────────────────────────────
 
 async function analyzeImage(geminiKey, opts) {
@@ -759,6 +854,17 @@ async function main() {
   if (opts.action === "mask") {
     console.log("\nAction: mask");
     await createMask(opts);
+    return;
+  }
+
+  // ── Grid overlay (no API key needed) ──
+  if (opts.action === "grid") {
+    console.log("\nAction: grid");
+    if (!opts.image) {
+      console.error("Error: --image is required for grid.");
+      process.exit(1);
+    }
+    await createGrid(opts);
     return;
   }
 

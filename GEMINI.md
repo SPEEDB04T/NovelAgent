@@ -177,22 +177,22 @@ node generate.mjs enhance --image "output/gen_<seed>.png" --prompt "<SAME prompt
 
 Inpainting requires a **mask image** (white = areas to regenerate, black = keep).
 
-**Recommended workflow — view the image yourself:**
+**Recommended workflow — use the `grid` tool for visual grounding:**
 
-1. **View the generated image** — you are multimodal and can read local image files
-2. **Perform structured spatial analysis** — for each visible body part or defect, mentally identify:
-   - What it is (face, right_hand, left_arm, etc.)
-   - Its bounding box as approximate percentage of image dimensions
-   - Whether it has any anatomical issues (extra fingers, deformation, artifacts)
-3. **Convert to pixel coordinates** — multiply percentages by image dimensions (typically 832×1216):
-   - `x = x_percent × 832`, `y = y_percent × 1216`
-   - `w = width_percent × 832`, `h = height_percent × 1216`
-4. **Add ~20% padding** to each dimension for safety
+1. **Generate a grid overlay** for the problem image:
+   ```bash
+   node generate.mjs grid --image "output/gen_<seed>.png" --out output
+   ```
+   *This outputs a fresh image (`output/grid_XXX.png`) with a labeled A1-D6 grid, and prints the exact `--region` coordinates for every cell to the terminal.*
+
+2. **View the gridded image** — you are multimodal and can read local image files.
+3. **Identify the problem cells** — note which cells contain the bad hand, extra fingers, or artifacts (e.g., "The deformed hand is in cell C3").
+4. **Copy the coordinates** for those cells from the terminal output of step 1.
 5. **Create the mask and inpaint:**
 
 ```bash
-# Create mask from your detected region
-node generate.mjs mask --image "output/gen_<seed>.png" --region "<x>,<y>,<w>,<h>" --out output
+# Create mask using the exact coordinates for the problem cells (e.g., C3's coordinates)
+node generate.mjs mask --image "output/gen_<seed>.png" --region "320,212,160,106" --out output
 
 # Inpaint the masked region
 node generate.mjs inpaint --image "output/gen_<seed>.png" \
