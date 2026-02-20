@@ -469,7 +469,6 @@ function buildInpaintPayload(opts, imageBase64, maskBase64, refBase64) {
   params.mask = maskBase64;
   params.strength = opts.inpaintStrength;
   params.extra_noise_seed = params.seed;
-  params.add_original_image = true;
 
   // Include style reference if provided (preserves style in inpainted region)
   if (refBase64) {
