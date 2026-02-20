@@ -81,7 +81,7 @@ function parseArgs() {
 
     // Precise Reference (generate mode)
     ref: null,
-    refCaption: "style",
+    refCaption: "character&style",
     strength: 1,
     fidelity: 0,
     infoExtracted: 1,
@@ -385,9 +385,12 @@ function buildVibePayload(opts, vibeBase64s) {
   };
 }
 
-function buildEnhancePayload(opts, imageBase64) {
+function buildEnhancePayload(opts, imageBase64, imgWidth, imgHeight) {
   const params = baseParams(opts);
 
+  // Use actual source image dimensions, not CLI defaults
+  params.width = imgWidth;
+  params.height = imgHeight;
   params.image = imageBase64;
 
   // Magnitude is a convenience for combined strength+noise
@@ -406,8 +409,8 @@ function buildEnhancePayload(opts, imageBase64) {
 
   // Upscale dimensions
   if (opts.upscale > 1) {
-    params.width = opts.width * opts.upscale;
-    params.height = opts.height * opts.upscale;
+    params.width = imgWidth * opts.upscale;
+    params.height = imgHeight * opts.upscale;
   }
 
   return {
@@ -580,15 +583,11 @@ async function main() {
     await fs.mkdir(opts.out, { recursive: true });
     const outPath = path.join(opts.out, `${opts.directorTool}_${Date.now()}.png`);
 
-    // Director returns PNG directly (not zipped)
-    try {
-      const pngData = extractPng(result);
-      await fs.writeFile(outPath, pngData);
-    } catch {
-      await fs.writeFile(outPath, result);
-    }
+    // Director API returns zip (per official schema)
+    const pngData = extractPng(result);
+    await fs.writeFile(outPath, pngData);
 
-    console.log(`Saved: ${outPath}`);
+    console.log(`Saved: ${outPath} (${(pngData.length / 1024).toFixed(0)} KB)`);
     return;
   }
 
@@ -635,11 +634,16 @@ async function main() {
     }
 
     console.log(`Enhancing: ${opts.image}...`);
-    const imageBase64 = await loadImageBase64(opts.image);
+    const sharp = (await import("sharp")).default;
+    const imgBuf = await fs.readFile(opts.image);
+    const imgMeta = await sharp(imgBuf).metadata();
+    const imgWidth = imgMeta.width;
+    const imgHeight = imgMeta.height;
+    const imageBase64 = imgBuf.toString("base64");
 
-    const payload = buildEnhancePayload(opts, imageBase64);
+    const payload = buildEnhancePayload(opts, imageBase64, imgWidth, imgHeight);
     const p = payload.parameters;
-    console.log(`  ${opts.width * opts.upscale}×${opts.height * opts.upscale}, strength=${p.strength}, noise=${p.noise}, seed=${p.seed}`);
+    console.log(`  ${p.width}×${p.height}, strength=${p.strength}, noise=${p.noise}, seed=${p.seed}`);
 
     const zipBuffer = await callNovelAI(apiKey, payload);
     const pngData = extractPng(zipBuffer);
