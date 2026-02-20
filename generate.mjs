@@ -462,13 +462,24 @@ function buildEnhancePayload(opts, imageBase64, imgWidth, imgHeight) {
   };
 }
 
-function buildInpaintPayload(opts, imageBase64, maskBase64) {
+function buildInpaintPayload(opts, imageBase64, maskBase64, refBase64) {
   const params = baseParams(opts);
 
   params.image = imageBase64;
   params.mask = maskBase64;
   params.strength = opts.inpaintStrength;
   params.extra_noise_seed = params.seed;
+
+  // Include style reference if provided (preserves style in inpainted region)
+  if (refBase64) {
+    params.director_reference_images = [refBase64];
+    params.director_reference_descriptions = [
+      { caption: { base_caption: opts.refCaption, char_captions: [] }, legacy_uc: false },
+    ];
+    params.director_reference_information_extracted = [opts.infoExtracted];
+    params.director_reference_strength_values = [opts.strength];
+    params.director_reference_secondary_strength_values = [opts.fidelity];
+  }
 
   return {
     input: opts.prompt,
@@ -1012,8 +1023,18 @@ async function main() {
     const imageBase64 = await loadImageBase64(opts.image);
     const maskBase64 = await loadImageBase64(opts.mask);
 
-    const payload = buildInpaintPayload(opts, imageBase64, maskBase64);
+    // Prepare style reference if provided (preserves style in inpainted region)
+    let refBase64 = null;
+    if (opts.ref) {
+      console.log("Preparing reference image for style preservation...");
+      refBase64 = await prepareReferenceImage(opts.ref);
+    }
+
+    const payload = buildInpaintPayload(opts, imageBase64, maskBase64, refBase64);
     console.log(`  ${opts.width}×${opts.height}, strength=${opts.inpaintStrength}, seed=${payload.parameters.seed}`);
+    if (opts.ref) {
+      console.log(`  Ref: strength=${opts.strength}, fidelity=${opts.fidelity}, info=${opts.infoExtracted}`);
+    }
 
     const zipBuffer = await callNovelAI(apiKey, payload);
     const pngData = extractPng(zipBuffer);
