@@ -177,48 +177,35 @@ node generate.mjs enhance --image "output/gen_<seed>.png" --prompt "<SAME prompt
 
 Inpainting requires a **mask image** (white = areas to regenerate, black = keep).
 
-**Recommended workflow — use `analyze` to detect regions automatically:**
+**Recommended workflow — view the image yourself:**
+
+1. **View the generated image** — you are multimodal and can read local image files
+2. **Identify the problem** — bad hand, extra fingers, deformed face, artifacts
+3. **Estimate the region** as `x,y,width,height` in pixels (the image is typically 832×1216)
+4. **Add ~20% padding** to your estimate for safety
+5. **Create the mask and inpaint:**
 
 ```bash
-# Step 1: Analyze image to detect body parts and issues (requires GEMINI_API_KEY)
-node generate.mjs analyze --image "output/gen_<seed>.png" --detect "hands, face"
-# Output example:
-#   face                 --region "233,51,233,314"  (233×314 px)
-#   right_hand           --region "441,486,208,304"  (208×304 px) ⚠️  extra fingers
+# Create mask from your estimated region
+node generate.mjs mask --image "output/gen_<seed>.png" --region "<x>,<y>,<w>,<h>" --out output
 
-# Step 2: Create mask from detected region
-node generate.mjs mask --image "output/gen_<seed>.png" --region "441,486,208,304" --out output
-
-# Step 3: Inpaint the masked region
+# Inpaint the masked region
 node generate.mjs inpaint --image "output/gen_<seed>.png" \
   --mask "output/mask_<timestamp>.png" \
   --prompt "detailed hand, relaxed fingers, natural pose, anatomically correct" \
   --inpaint-strength 0.7 --out output
 ```
 
-**Fallback: manual region estimation** (if no GEMINI_API_KEY available)
-
-Use the built-in `mask` action with approximate coordinates:
-
-**Full inpaint workflow:**
+**Optional: use `analyze` for precise detection** (requires GEMINI_API_KEY in .env):
 
 ```bash
-# Step 1: Create mask targeting the region to fix
-#   Specify regions as x,y,width,height coordinates
-node generate.mjs mask --image "output/gen_<seed>.png" \
-  --region "x,y,w,h" --out output
-
-# Step 2: Run inpaint with the mask
-node generate.mjs inpaint --image "output/gen_<seed>.png" \
-  --mask "output/mask_<timestamp>.png" \
-  --prompt "<describe what should appear in the masked region>" \
-  --inpaint-strength 0.7 --out output
+node generate.mjs analyze --image "output/gen_<seed>.png" --detect "hands, face"
+# Output example:
+#   face                 --region "233,51,233,314"  (233×314 px)
+#   right_hand           --region "441,486,208,304"  (208×304 px) ⚠️  extra fingers
 ```
 
-**How to determine mask regions:**
-1. View the generated image to identify the problem area
-2. Estimate the pixel coordinates (x, y) and dimensions (w, h) of the region
-3. For a 832×1216 image, approximate regions:
+**Manual region guide** for standard 832×1216 compositions:
    - **Face/head**: `--region "280,50,280,300"`
    - **Left hand**: `--region "50,400,250,300"`
    - **Right hand**: `--region "530,400,250,300"`
